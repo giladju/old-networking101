@@ -1,0 +1,5 @@
+---
+- hosts: services
+  roles: 
+    - environment-setup
+    - service-setup

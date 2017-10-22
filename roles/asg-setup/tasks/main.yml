@@ -1,0 +1,106 @@
+---
+# tasks file for asg-setup
+- name: gather facts - subnets
+  ec2_vpc_subnet_facts:
+    region: "{{ region }}"
+  register: ec2_vpc_subnet_facts
+- name: set_fact env public subnet name
+  set_fact:
+    env_public_subnet_name: "{{ envname }}_public"
+- name: set_fact env private subnet name
+  set_fact:
+    env_private_subnet_name: "{{ envname }}_private"
+- name: set_fact env private secondary subnet name
+  set_fact:
+    env_private_secondary_subnet_name: "{{ envname }}_private-secondary"
+- name: set fact current vpc
+  set_fact:
+    current_vpc: "{{ (ec2_vpc_subnet_facts.subnets | selectattr('tags.Name', 'equalto', env_public_subnet_name)|first).vpc_id }}"
+
+- name: set fact subnets of current vpc
+  set_fact:
+    subnets_of_current_vpc: "{{ (ec2_vpc_subnet_facts.subnets | selectattr('vpc_id', 'equalto', current_vpc)| list ) }}"
+- name: set_fact current id of public subnet
+  set_fact:
+    current_public_subnet: "{{ (subnets_of_current_vpc | selectattr('tags.Name', 'equalto', env_public_subnet_name)|first).id }}"
+- name: set_fact current id of private subnet
+  set_fact:
+    current_private_subnet: "{{ (subnets_of_current_vpc | selectattr('tags.Name', 'equalto', env_private_subnet_name)|first).id }}"
+- name: set_fact current id of private secondary subnet
+  set_fact:
+    current_private_secondary_subnet: "{{ (subnets_of_current_vpc | selectattr('tags.Name', 'equalto', env_private_secondary_subnet_name)|first).id }}"
+- name: gather facts - security groups
+  ec2_group_facts:
+    region: "{{ region }}"
+  register: ec2_security_groups_facts
+- name: set_fact for sg default id  
+  set_fact:
+    sg_id_default: "{{ ((ec2_security_groups_facts.security_groups | selectattr('vpc_id', 'equalto', current_vpc )| selectattr('group_name', 'equalto', 'default'))|list|first).group_id }}"
+- name: create asg for customer facing service with ELBs
+  with_items: "{{ lcs|selectattr('elb', 'defined')|selectattr('elb')|list }}"
+  ec2_asg:
+    name: "ASG-{{ envname }}-{{ item.role }}"
+    launch_config_name: "LC-{{ envname }}-{{ item.role }}"
+    load_balancers: 
+      - "{{ envname }}-{{ item.role }}"
+    health_check_period: 60
+    health_check_type: EC2
+    min_size: "{{ (asgs|selectattr('name', 'equalto', item.role)|list|first).min_size }}"
+    max_size: "{{ (asgs|selectattr('name', 'equalto', item.role)|list|first).max_size }}"
+    desired_capacity: "{{ (asgs|selectattr('name', 'equalto', item.role)|list|first).desired_capacity }}"
+    region: "{{ region }}"
+    vpc_zone_identifier: 
+      - "{{ current_private_subnet }}"
+    tags:
+      - environment: "{{ envname }}"
+      - role: "{{ item.role }}"
+      - Name: "{{ envname }}-{{ item.role }}"
+- name: gather facts - target_groups
+  elb_target_group_facts:
+  register: elb_target_group_facts
+- name: set fact target_groups list
+  set_fact:
+    elb_target_group_list: "{{ elb_target_group_facts.target_groups }}"
+- name: set_fact list of target_group_arns
+  set_fact:
+    list_of_target_group_arns: "{{ elb_target_group_list | map(attribute='target_group_arn')|list }}"
+- name: create asg for internal services with ALBs
+  with_items: "{{ lcs|selectattr('alb', 'defined')|selectattr('alb')|list }}"
+  ec2_asg:
+    name: "ASG-{{ envname }}-{{ item.role }}"
+    launch_config_name: "LC-{{ envname }}-{{ item.role }}"
+    target_group_arns: 
+      - "{{ elb_target_group_list | selectattr('target_group_arn', 'search', current_target_group_name) | map(attribute='target_group_arn') | list | first }}"
+    health_check_period: 60
+    health_check_type: EC2
+    min_size: "{{ (asgs|selectattr('name', 'equalto', item.role)|list|first).min_size }}"
+    max_size: "{{ (asgs|selectattr('name', 'equalto', item.role)|list|first).max_size }}"
+    desired_capacity: "{{ (asgs|selectattr('name', 'equalto', item.role)|list|first).desired_capacity }}"
+    region: "{{ region }}"
+    vpc_zone_identifier: 
+      - "{{ current_private_subnet }}"
+    tags:
+      - environment: "{{ envname }}"
+      - role: "{{ item.role }}"
+      - Name: "{{ envname }}-{{ item.role }}"
+  vars:
+    - current_target_group_name: "{{ envname }}{{ item.role}}"  
+
+
+- name: create asg for zookeeper - no LB
+  with_items: "{{ lcs|selectattr('zk', 'defined')|selectattr('zk')|list }}"
+  ec2_asg:
+    name: "ASG-{{ envname }}-{{ item.role }}"
+    launch_config_name: "LC-{{ envname }}-{{ item.role }}"
+    health_check_period: 60
+    health_check_type: EC2
+    min_size: "{{ (asgs|selectattr('name', 'equalto', item.role)|list|first).min_size }}"
+    max_size: "{{ (asgs|selectattr('name', 'equalto', item.role)|list|first).max_size }}"
+    desired_capacity: "{{ (asgs|selectattr('name', 'equalto', item.role)|list|first).desired_capacity }}"
+    region: "{{ region }}"
+    vpc_zone_identifier: 
+      - "{{ current_private_subnet }}"
+    tags:
+      - environment: "{{ envname }}"
+      - role: "{{ item.role }}"
+      - Name: "{{ envname }}-{{ item.role }}"

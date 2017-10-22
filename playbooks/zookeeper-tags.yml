@@ -1,0 +1,5 @@
+---
+- hosts: localhost
+  roles:
+    - environment-setup 
+    - aws-tags

@@ -1,0 +1,105 @@
+---
+# tasks file for launchconfiguration-setup
+- name: gather facts - subnets
+  ec2_vpc_subnet_facts:
+    region: "{{ region }}"
+  register: ec2_vpc_subnet_facts
+- name: set_fact env public subnet name
+  set_fact:
+    env_public_subnet_name: "{{ envname }}_public"
+#- name: set_fact env private subnet name
+#  set_fact:
+#    env_private_subnet_name: "{{ envname }}_private"
+#- name: set_fact env private secondary subnet name
+#  set_fact:
+#    env_private_secondary_subnet_name: "{{ envname }}_private-secondary"
+- name: set fact current vpc
+  set_fact:
+    current_vpc: "{{ (ec2_vpc_subnet_facts.subnets | selectattr('tags.Name', 'equalto', env_public_subnet_name)|first).vpc_id }}"
+#- name: set fact subnets of current vpc
+#  set_fact:
+#    subnets_of_current_vpc: "{{ (ec2_vpc_subnet_facts.subnets | selectattr('vpc_id', 'equalto', current_vpc)| list ) }}"
+#- name: set_fact current id of public subnet
+#  set_fact:
+#    current_public_subnet: "{{ (subnets_of_current_vpc | selectattr('tags.Name', 'equalto', env_public_subnet_name)|first).id }}"
+#- name: set_fact current id of private subnet
+#  set_fact:
+#    current_private_subnet: "{{ (subnets_of_current_vpc | selectattr('tags.Name', 'equalto', env_private_subnet_name)|first).id }}"
+#- name: set_fact current id of private secondary subnet
+#  set_fact:
+#    current_private_secondary_subnet: "{{ (subnets_of_current_vpc | selectattr('tags.Name', 'equalto', env_private_secondary_subnet_name)|first).id }}"
+- name: gather facts - security groups
+  ec2_group_facts:
+    region: "{{ region }}"
+  register: ec2_security_groups_facts
+- name: set_fact for sg default id  
+  set_fact:
+    sg_id_default: "{{ ((ec2_security_groups_facts.security_groups | selectattr('vpc_id', 'equalto', current_vpc )| selectattr('group_name', 'equalto', 'default'))|list|first).group_id }}"
+- name: set_fact for sg ssh vpn id  
+  set_fact:
+    sg_id_ssh_vpn: "{{ ((ec2_security_groups_facts.security_groups | selectattr('vpc_id', 'equalto', current_vpc )| selectattr('group_name', 'equalto', sg_name_ssh_vpn ))|list|first).group_id }}"
+  vars:
+    - sg_name_ssh_vpn: '{{ envname }}_allow_ssh_from_vpn'  
+- name: set_fact for sg ssh http id  
+  set_fact:
+    sg_id_http_vpn: "{{ ((ec2_security_groups_facts.security_groups | selectattr('vpc_id', 'equalto', current_vpc )| selectattr('group_name', 'equalto', sg_name_http_vpn))|list|first).group_id }}"
+  vars:
+    - sg_name_http_vpn: '{{ envname }}_allow_8090_from_vpn'  
+- name: set_fact for sg alb http id  
+  set_fact:
+    sg_id_http_alb: "{{ ((ec2_security_groups_facts.security_groups | selectattr('vpc_id', 'equalto', current_vpc )| selectattr('group_name', 'equalto', sg_name_http_alb))|list|first).group_id }}"
+  vars:
+    - sg_name_http_alb: '{{ envname }}_allow_alb'  
+- name: deubg role
+  with_items: "{{ lcs|selectattr('elb', 'defined')|selectattr('elb')|list }}"
+  debug:
+    msg: "arn:aws:iam::{{ aws_account_num }}:instance-profile/{{ envname }}_{{ item.role }}"
+- name: create customer facing services launchconfigurations
+  with_items: "{{ lcs|selectattr('elb', 'defined')|selectattr('elb')|list }}"
+  ec2_lc:
+    name: "LC-{{ envname }}-{{ item.role }}"
+    instance_profile_name: "arn:aws:iam::{{ aws_account_num }}:instance-profile/{{ envname }}_{{ item.role }}"
+    image_id: "{{ ami }}"
+    key_name: "{{ envname }}"
+    security_groups: 
+      - "{{ sg_id_default }}"
+      - "{{ sg_id_ssh_vpn }}"
+      - "{{ sg_id_http_vpn }}"
+    instance_type: t2.micro
+    volumes:
+    - device_name: /dev/sda1
+      volume_size: 8
+      delete_on_termination: true
+- name: create internal services launchconfigurations
+  with_items: "{{ lcs|selectattr('alb', 'defined')|selectattr('alb')|list }}"
+  ec2_lc:
+    name: "LC-{{ envname }}-{{ item.role }}"
+    instance_profile_name: "arn:aws:iam::{{ aws_account_num }}:instance-profile/{{ envname }}_{{ item.role }}"
+    image_id: "{{ ami }}"
+    key_name: "{{ envname }}"
+    security_groups: 
+      - "{{ sg_id_default }}"
+      - "{{ sg_id_ssh_vpn }}"
+      - "{{ sg_id_http_vpn }}"
+      - "{{ sg_id_http_alb }}"
+    instance_type: t2.micro
+    volumes:
+    - device_name: /dev/sda1
+      volume_size: 8
+      delete_on_termination: true
+- name: create zookeeper launchconfiguration
+  with_items: "{{ lcs|selectattr('zk', 'defined')|selectattr('zk')|list }}"
+  ec2_lc:
+    name: "LC-{{ envname }}-{{ item.role }}"
+    instance_profile_name: "arn:aws:iam::{{ aws_account_num }}:instance-profile/{{ envname }}_{{ item.role }}"
+    image_id: "{{ ami }}"
+    key_name: "{{ envname }}"
+    security_groups: 
+      - "{{ sg_id_default }}"
+      - "{{ sg_id_ssh_vpn }}"
+      - "{{ sg_id_http_vpn }}"
+    instance_type: t2.micro
+    volumes:
+    - device_name: /dev/sda1
+      volume_size: 8
+      delete_on_termination: true

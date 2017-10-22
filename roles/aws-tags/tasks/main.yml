@@ -1,0 +1,14 @@
+---
+# tasks file for aws-tags
+- name: debug
+  debug:
+    msg: "{{ hostvars[item] | selectattr('ec2_private_ip_address', 'equalto', hostvars[item].ansible_host) | map(attribute='ec2_id') | list | first }}"
+  with_items: "{{ groups['zookeepers'] }}"
+- name: set zookeeper tags in ec2
+  ec2_tag:
+    region: "{{ region }}"
+    resource: "{{ hostvars | selectattr('ec2_private_ip_address', 'equalto', hostvars[item].ansible_host) | map(attribute='ec2_id') | list | first }}"
+    state: present
+    tags:
+      - zkmyid: "{{ item.0 + 1 }}"
+  with_indexed_items: "{{ groups['zookeepers'] }}"

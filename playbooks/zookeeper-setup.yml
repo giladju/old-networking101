@@ -1,0 +1,7 @@
+---
+- hosts: zookeepers
+  roles:
+    - environment-setup 
+    - zookeeper-setup
+  vars:
+    - zookeeper_servers: '{{ groups["zookeepers"] }}'

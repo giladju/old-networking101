@@ -1,0 +1,8 @@
+---
+- hosts: localhost,
+  connection: local
+  become: False
+  gather_facts: False
+  roles: 
+    - environment-setup
+    - vpc-setup
